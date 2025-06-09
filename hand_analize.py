@@ -17,7 +17,7 @@ import joblib
 class HandModel(nn.Module):
     """Model neuronowy do predykcji kąta rozwarcia dłoni"""
 
-    def __init__(self, input_size=84, hidden_size=128):  # 21 punktów * 2 ręce * 2 koordynaty = 84
+    def __init__(self, input_size=42, hidden_size=128):  # 21 punktów * 2 koordynaty = 42 (jedna ręka)
         super(HandModel, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(input_size, hidden_size),
@@ -57,9 +57,9 @@ class HandAnalyzer:
         self.setup_midi()
 
         # Parametry
-        self.DATA_COLLECTION_ROUNDS = 5
-        self.PREPARATION_TIME = 5
-        self.CSV_FILE = 'data.csv'
+        self.DATA_COLLECTION_ROUNDS = 8
+        self.PREPARATION_TIME = 3
+        self.CSV_FILE = 'hand_data.csv'  # Zmiana nazwy pliku dla lepszej jasności
 
     def setup_midi(self):
         """Inicjalizacja MIDI"""
@@ -86,7 +86,7 @@ class HandAnalyzer:
         return distance
 
     def landmarks_to_array(self, landmarks) -> np.array:
-        """Konwertuje landmarki do tablicy numpy"""
+        """Konwertuje landmarki do tablicy numpy (jedna ręka)"""
         if landmarks is None:
             return np.zeros(42)  # 21 punktów * 2 koordynaty
 
@@ -128,9 +128,10 @@ class HandAnalyzer:
             print(f"Błąd wysyłania MIDI: {e}")
 
     def collect_data_mode(self):
-        """Tryb zbierania danych treningowych"""
+        """Tryb zbierania danych treningowych - każda ręka zapisywana osobno"""
         print(f"=== TRYB ZBIERANIA DANYCH ===")
         print(f"Będę zadawać {self.DATA_COLLECTION_ROUNDS} pytań o różne kąty rozwarcia")
+        print("KAŻDA RĘKA będzie zapisana jako OSOBNA próbka!")
 
         cap = cv2.VideoCapture(0)
 
@@ -152,56 +153,55 @@ class HandAnalyzer:
             # Zrób zdjęcie i zapisz dane
             ret, frame = cap.read()
             if ret:
-                self.capture_and_save_data(frame, target_angle)
+                samples_saved = self.capture_and_save_data_separate(frame, target_angle)
+                print(f"✓ Zapisano {samples_saved} próbek dla kąta {target_angle}%")
 
             time.sleep(1)  # Krótka pauza między rundami
 
         cap.release()
         print(f"\nZbieranie danych zakończone! Dane zapisane w {self.CSV_FILE}")
 
-    def capture_and_save_data(self, frame, target_angle):
-        """Przechwytuje dane z klatki i zapisuje do CSV"""
+    def capture_and_save_data_separate(self, frame, target_angle) -> int:
+        """Przechwytuje dane z klatki i zapisuje każdą rękę osobno do CSV"""
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb_frame)
 
-        if results.multi_hand_landmarks:
-            hands_data = []
+        samples_saved = 0
 
-            # Przetwórz wszystkie wykryte ręce
-            for hand_landmarks in results.multi_hand_landmarks:
-                landmarks_array = self.landmarks_to_array(hand_landmarks.landmark)
-                hands_data.extend(landmarks_array)
-
-            # Uzupełnij do 2 rąk jeśli potrzeba
-            while len(hands_data) < 84:  # 2 ręce * 42 koordynaty
-                hands_data.extend([0] * 42)
-
-            # Przygotuj dane do zapisu
-            data_row = hands_data + [target_angle]
-
-            # Nazwy kolumn
+        if results.multi_hand_landmarks and results.multi_handedness:
+            # Przygotuj nazwy kolumn (jedna ręka)
             columns = []
-            for hand_id in ['left', 'right']:
-                for point_id in range(21):
-                    columns.extend([f'{hand_id}_x_{point_id}', f'{hand_id}_y_{point_id}'])
-            columns.append('target_angle')
+            for point_id in range(21):
+                columns.extend([f'x_{point_id}', f'y_{point_id}'])
+            columns.extend(['target_angle', 'hand_type'])  # Dodajemy informację o typie ręki
 
-            # Zapisz do CSV
-            df_new = pd.DataFrame([data_row], columns=columns)
+            # Przetwórz każdą wykrytą rękę osobno
+            for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+                # Określ typ ręki (uwaga: MediaPipe odwraca left/right)
+                hand_type = 'left' if handedness.classification[0].label == 'Right' else 'right'
+                
+                # Konwertuj landmarki do tablicy
+                landmarks_array = self.landmarks_to_array(hand_landmarks.landmark)
+                
+                # Przygotuj dane do zapisu (jedna ręka)
+                data_row = list(landmarks_array) + [target_angle, hand_type]
 
-            if os.path.exists(self.CSV_FILE):
-                df_new.to_csv(self.CSV_FILE, mode='a', header=False, index=False)
-            else:
-                df_new.to_csv(self.CSV_FILE, index=False)
+                # Zapisz do CSV
+                df_new = pd.DataFrame([data_row], columns=columns)
 
-            print(f"✓ Zapisano dane dla kąta {target_angle}%")
-        else:
-            print("✗ Nie wykryto rąk - spróbuj ponownie")
+                if os.path.exists(self.CSV_FILE):
+                    df_new.to_csv(self.CSV_FILE, mode='a', header=False, index=False)
+                else:
+                    df_new.to_csv(self.CSV_FILE, index=False)
+
+                samples_saved += 1
+
+        return samples_saved
 
     def load_model(self):
         """Ładuje wytrenowany model"""
         try:
-            self.model = HandModel().to(self.device)
+            self.model = HandModel().to(self.device)  # input_size=42 dla jednej ręki
             self.model.load_state_dict(torch.load('hand_model.pth', map_location=self.device))
             self.model.eval()
 
@@ -212,13 +212,33 @@ class HandAnalyzer:
             print(f"Błąd ładowania modelu: {e}")
             return False
 
+    def predict_hand_opening(self, hand_landmarks) -> float:
+        """Przewiduje procent rozwarcia dla pojedynczej ręki"""
+        try:
+            # Konwertuj landmarki do tablicy
+            landmarks_array = self.landmarks_to_array(hand_landmarks.landmark)
+            
+            # Normalizuj dane
+            landmarks_scaled = self.scaler.transform([landmarks_array])
+            
+            # Predykcja
+            landmarks_tensor = torch.FloatTensor(landmarks_scaled).to(self.device)
+            with torch.no_grad():
+                prediction = self.model(landmarks_tensor).cpu().numpy()[0][0]
+            
+            return prediction
+        except Exception as e:
+            print(f"Błąd predykcji: {e}")
+            return 0.0
+
     def inference_mode(self):
-        """Tryb inferencji z wyświetlaniem i MIDI"""
+        """Tryb inferencji z osobnymi predykcjami dla każdej ręki"""
         if not self.load_model():
             print("Nie można załadować modelu. Uruchom najpierw trening.")
             return
 
         print("=== TRYB INFERENCJI ===")
+        print("Każda ręka analizowana OSOBNO")
         print("Naciśnij 'q' aby zakończyć")
 
         cap = cv2.VideoCapture(0)
@@ -235,58 +255,54 @@ class HandAnalyzer:
 
             left_percentage = 0
             right_percentage = 0
+            left_prediction = 0
+            right_prediction = 0
 
             if results.multi_hand_landmarks and results.multi_handedness:
-                hands_data = np.zeros(84)  # 2 ręce * 42 koordynaty
-
-                for idx, (hand_landmarks, handedness) in enumerate(
-                        zip(results.multi_hand_landmarks, results.multi_handedness)):
+                for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
                     # Rysuj landmarki
                     self.mp_drawing.draw_landmarks(
                         frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
 
                     # Określ która ręka (uwaga: MediaPipe odwraca left/right)
-                    is_left = handedness.classification[0].label == 'Right'  # Odwrócone!
-                    hand_offset = 0 if is_left else 42
+                    is_left = handedness.classification[0].label == 'Right'
+                    hand_label = "Lewa" if is_left else "Prawa"
 
-                    # Zapisz dane ręki
-                    landmarks_array = self.landmarks_to_array(hand_landmarks.landmark)
-                    hands_data[hand_offset:hand_offset + 42] = landmarks_array
-
-                    # Oblicz procent rozwarcia dla tej ręki
+                    # Oblicz procent rozwarcia metodą geometryczną
                     distance = self.calculate_finger_distance(hand_landmarks.landmark)
                     percentage = self.normalize_distance_to_percentage(distance)
 
+                    # Predykcja modelem dla tej konkretnej ręki
+                    prediction = self.predict_hand_opening(hand_landmarks)
+
                     if is_left:
                         left_percentage = percentage
+                        left_prediction = prediction
+                        y_pos = 30
                     else:
                         right_percentage = percentage
+                        right_prediction = prediction
+                        y_pos = 60
 
                     # Wyświetl informacje na ekranie
-                    hand_label = "Lewa" if is_left else "Prawa"
-                    cv2.putText(frame, f"{hand_label}: {percentage:.1f}%",
-                                (10, 30 + idx * 30), cv2.FONT_HERSHEY_SIMPLEX,
-                                0.7, (0, 255, 0), 2)
+                    cv2.putText(frame, f"{hand_label} (geom): {percentage:.1f}%",
+                                (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6, (0, 255, 0), 2)
+                    
+                    cv2.putText(frame, f"{hand_label} (model): {prediction:.1f}%",
+                                (10, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6, (255, 0, 0), 2)
 
-                # Predykcja modelem (opcjonalnie)
-                try:
-                    hands_data_scaled = self.scaler.transform([hands_data])
-                    hands_tensor = torch.FloatTensor(hands_data_scaled).to(self.device)
+                # Wyślij dane MIDI (możesz wybrać czy geometryczne czy z modelu)
+                self.send_midi_data(left_prediction, right_prediction)  # Używam predykcji modelu
 
-                    with torch.no_grad():
-                        prediction = self.model(hands_tensor).cpu().numpy()[0][0]
-
-                    cv2.putText(frame, f"Predykcja modelu: {prediction:.1f}%",
-                                (10, 100), cv2.FONT_HERSHEY_SIMPLEX,
-                                0.7, (255, 0, 0), 2)
-                except Exception as e:
-                    pass  # Ignoruj błędy predykcji
-
-                # Wyślij dane MIDI
-                self.send_midi_data(left_percentage, right_percentage)
+            # Dodatkowe informacje na ekranie
+            cv2.putText(frame, "Analiza osobna dla kazdej reki",
+                        (10, frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, (255, 255, 255), 1)
 
             # Wyświetl obraz
-            cv2.imshow('Hand Analysis', frame)
+            cv2.imshow('Hand Analysis - Separate Hands', frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -302,7 +318,7 @@ class HandAnalyzer:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Analiza rozwarcia dłoni')
+    parser = argparse.ArgumentParser(description='Analiza rozwarcia dłoni - każda ręka osobno')
     parser.add_argument('--mode', choices=['collect', 'inference'],
                         default='collect', help='Tryb pracy')
 

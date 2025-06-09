@@ -13,9 +13,9 @@ import os
 
 
 class HandModel(nn.Module):
-    """Model neuronowy do predykcji kąta rozwarcia dłoni"""
+    """Model neuronowy do predykcji kąta rozwarcia pojedynczej dłoni"""
 
-    def __init__(self, input_size=84, hidden_size=128):
+    def __init__(self, input_size=42, hidden_size=128):  # 21 punktów * 2 koordynaty = 42 (jedna ręka)
         super(HandModel, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(input_size, hidden_size),
@@ -35,7 +35,7 @@ class HandModel(nn.Module):
 
 
 class HandModelTrainer:
-    def __init__(self, csv_file='data.csv'):
+    def __init__(self, csv_file='hand_data.csv'):
         self.csv_file = csv_file
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Używam urządzenia: {self.device}")
@@ -50,23 +50,29 @@ class HandModelTrainer:
         self.validation_split = 0.2
 
     def load_data(self):
-        """Ładuje i przygotowuje dane z CSV"""
+        """Ładuje i przygotowuje dane z CSV (każda ręka jako osobna próbka)"""
         if not os.path.exists(self.csv_file):
             raise FileNotFoundError(f"Plik {self.csv_file} nie istnieje. Uruchom najpierw zbieranie danych.")
 
         print(f"Ładowanie danych z {self.csv_file}...")
         df = pd.read_csv(self.csv_file)
 
-        print(f"Załadowano {len(df)} próbek")
+        print(f"Załadowano {len(df)} próbek (każda ręka osobno)")
+        
+        # Analiza rozkładu danych
         print(f"Rozkład kątów docelowych:")
         print(df['target_angle'].value_counts().sort_index())
-
+        
+        print(f"Rozkład typów rąk:")
+        if 'hand_type' in df.columns:
+            print(df['hand_type'].value_counts())
+        
         # Sprawdź czy mamy wystarczająco danych
         if len(df) < 10:
-            print("⚠️  Uwaga: Bardzo mało danych treningowych. Zalecane minimum to 50+ próbek.")
+            print("⚠️  Uwaga: Bardzo mało danych treningowych. Zalecane minimum to 50+ próbek na rękę.")
 
-        # Przygotuj dane wejściowe (wszystkie kolumny oprócz target_angle)
-        feature_columns = [col for col in df.columns if col != 'target_angle']
+        # Przygotuj dane wejściowe (wszystkie kolumny oprócz target_angle i hand_type)
+        feature_columns = [col for col in df.columns if col not in ['target_angle', 'hand_type']]
         X = df[feature_columns].values
         y = df['target_angle'].values
 
@@ -77,6 +83,10 @@ class HandModelTrainer:
             X = df_clean[feature_columns].values
             y = df_clean['target_angle'].values
             print(f"Po czyszczeniu zostało {len(X)} próbek")
+
+        # Informacje o rozmiarze danych
+        print(f"Rozmiar danych wejściowych: {X.shape}")
+        print(f"Rozmiar danych wyjściowych: {y.shape}")
 
         return X, y
 
@@ -116,7 +126,7 @@ class HandModelTrainer:
     def train_model(self, train_loader, val_loader):
         """Trenuje model"""
         # Inicjalizacja modelu
-        input_size = 84  # 2 ręce * 21 punktów * 2 koordynaty
+        input_size = 42  # 21 punktów * 2 koordynaty (jedna ręka)
         self.model = HandModel(input_size=input_size).to(self.device)
 
         # Optymalizator i funkcja straty
@@ -128,6 +138,7 @@ class HandModelTrainer:
         val_losses = []
 
         print(f"\nRozpoczynanie treningu na {self.epochs} epok...")
+        print(f"Model dla pojedynczej ręki (input_size={input_size})")
 
         for epoch in range(self.epochs):
             # Faza treningowa
@@ -184,7 +195,7 @@ class HandModelTrainer:
         mae = mean_absolute_error(y_val, predictions)
         r2 = r2_score(y_val, predictions)
 
-        print(f"\n=== EWALUACJA MODELU ===")
+        print(f"\n=== EWALUACJA MODELU (JEDNA RĘKA) ===")
         print(f"Mean Absolute Error: {mae:.2f}%")
         print(f"R² Score: {r2:.4f}")
 
@@ -204,7 +215,7 @@ class HandModelTrainer:
         plt.subplot(1, 2, 1)
         plt.plot(train_losses, label='Training Loss')
         plt.plot(val_losses, label='Validation Loss')
-        plt.title('Training History')
+        plt.title('Training History - Single Hand Model')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.legend()
@@ -217,16 +228,17 @@ class HandModelTrainer:
                  ha='center', va='center', transform=plt.gca().transAxes)
 
         plt.tight_layout()
-        plt.savefig('training_history.png', dpi=150, bbox_inches='tight')
+        plt.savefig('training_history_single_hand.png', dpi=150, bbox_inches='tight')
         plt.show()
 
-        print("Wykres zapisany jako 'training_history.png'")
+        print("Wykres zapisany jako 'training_history_single_hand.png'")
 
     def plot_predictions(self, y_true, y_pred):
         """Rysuje wykres porównania predykcji z rzeczywistymi wartościami"""
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(12, 8))
 
-        plt.subplot(1, 2, 1)
+        # Wykres scatter
+        plt.subplot(2, 2, 1)
         plt.scatter(y_true, y_pred, alpha=0.7)
         plt.plot([0, 100], [0, 100], 'r--', lw=2)
         plt.xlabel('Rzeczywiste wartości (%)')
@@ -234,7 +246,8 @@ class HandModelTrainer:
         plt.title('Predykcje vs Rzeczywiste wartości')
         plt.grid(True)
 
-        plt.subplot(1, 2, 2)
+        # Histogram błędów
+        plt.subplot(2, 2, 2)
         errors = y_pred - y_true
         plt.hist(errors, bins=20, alpha=0.7)
         plt.xlabel('Błąd predykcji (%)')
@@ -242,11 +255,27 @@ class HandModelTrainer:
         plt.title('Rozkład błędów')
         plt.grid(True)
 
+        # Rozkład prawdziwych wartości
+        plt.subplot(2, 2, 3)
+        plt.hist(y_true, bins=20, alpha=0.7, color='green')
+        plt.xlabel('Rzeczywiste wartości (%)')
+        plt.ylabel('Liczba próbek')
+        plt.title('Rozkład prawdziwych wartości')
+        plt.grid(True)
+
+        # Rozkład predykcji
+        plt.subplot(2, 2, 4)
+        plt.hist(y_pred, bins=20, alpha=0.7, color='orange')
+        plt.xlabel('Predykcje (%)')
+        plt.ylabel('Liczba próbek')
+        plt.title('Rozkład predykcji')
+        plt.grid(True)
+
         plt.tight_layout()
-        plt.savefig('model_evaluation.png', dpi=150, bbox_inches='tight')
+        plt.savefig('model_evaluation_single_hand.png', dpi=150, bbox_inches='tight')
         plt.show()
 
-        print("Wykres ewaluacji zapisany jako 'model_evaluation.png'")
+        print("Wykres ewaluacji zapisany jako 'model_evaluation_single_hand.png'")
 
     def save_model(self):
         """Zapisuje wytrenowany model i scaler"""
@@ -255,12 +284,33 @@ class HandModelTrainer:
 
         print(f"\n✓ Model zapisany jako 'hand_model.pth'")
         print(f"✓ Scaler zapisany jako 'scaler.pkl'")
+        print(f"✓ Model przygotowany dla pojedynczej ręki (input_size=42)")
+
+    def analyze_data_distribution(self, df):
+        """Analizuje rozkład danych treningowych"""
+        print(f"\n=== ANALIZA DANYCH TRENINGOWYCH ===")
+        
+        if 'hand_type' in df.columns:
+            print("Próbek dla każdego typu ręki:")
+            hand_counts = df['hand_type'].value_counts()
+            print(hand_counts)
+            
+            print("\nRozkład kątów dla każdej ręki:")
+            for hand_type in df['hand_type'].unique():
+                print(f"\n{hand_type.upper()} RĘKA:")
+                angles = df[df['hand_type'] == hand_type]['target_angle'].value_counts().sort_index()
+                print(angles)
 
     def train_full_pipeline(self):
         """Pełny pipeline treningu"""
         try:
             # Załaduj dane
             X, y = self.load_data()
+            
+            # Dodatkowa analiza jeśli potrzebna
+            if os.path.exists(self.csv_file):
+                df = pd.read_csv(self.csv_file)
+                self.analyze_data_distribution(df)
 
             # Przygotuj dane
             train_loader, val_loader, X_val, y_val = self.prepare_data(X, y)
@@ -280,6 +330,7 @@ class HandModelTrainer:
 
             print(f"\n🎉 Trening zakończony pomyślnie!")
             print(f"📊 Końcowe metryki: MAE = {mae:.2f}%, R² = {r2:.4f}")
+            print(f"📈 Model został wytrenowany na {len(X)} próbkach (każda ręka osobno)")
 
             return True
 
@@ -289,17 +340,22 @@ class HandModelTrainer:
 
 
 def main():
-    print("=== TRENING MODELU ANALIZY DŁONI ===\n")
+    print("=== TRENING MODELU ANALIZY DŁONI (KAŻDA RĘKA OSOBNO) ===\n")
 
     trainer = HandModelTrainer()
     success = trainer.train_full_pipeline()
 
     if success:
         print("\n🚀 Model gotowy do użycia!")
-        print("Uruchom: python hand_analysis.py --mode inference")
+        print("Uruchom: python hand_analyze.py --mode inference")
+        print("\n💡 Zalety nowego podejścia:")
+        print("• Każda ręka jest osobną próbką treningową")
+        print("• Podwójnie więcej danych z tego samego wysiłku")
+        print("• Osobne predykcje dla każdej ręki")
+        print("• Lepsze dopasowanie do asymetrii ruchów")
     else:
         print("\n💡 Spróbuj zebrać więcej danych treningowych:")
-        print("python hand_analysis.py --mode collect")
+        print("python hand_analyze.py --mode collect")
 
 
 if __name__ == "__main__":
