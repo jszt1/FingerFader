@@ -131,7 +131,7 @@ class HandAnalyzer:
         """Tryb zbierania danych treningowych - każda ręka zapisywana osobno"""
         print(f"=== TRYB ZBIERANIA DANYCH ===")
         print(f"Będę zadawać {self.DATA_COLLECTION_ROUNDS} pytań o różne kąty rozwarcia")
-        print("KAŻDA RĘKA będzie zapisana jako OSOBNA próbka!")
+        print("KAŻDA RĘKA będzie zapisana jako OSOBNA próbka (bez rozróżnienia lewa/prawa)!")
 
         cap = cv2.VideoCapture(0)
 
@@ -168,23 +168,20 @@ class HandAnalyzer:
 
         samples_saved = 0
 
-        if results.multi_hand_landmarks and results.multi_handedness:
+        if results.multi_hand_landmarks:
             # Przygotuj nazwy kolumn (jedna ręka)
             columns = []
             for point_id in range(21):
                 columns.extend([f'x_{point_id}', f'y_{point_id}'])
-            columns.extend(['target_angle', 'hand_type'])  # Dodajemy informację o typie ręki
+            columns.append('target_angle')  # Tylko kąt docelowy, bez typu ręki
 
             # Przetwórz każdą wykrytą rękę osobno
-            for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
-                # Określ typ ręki (uwaga: MediaPipe odwraca left/right)
-                hand_type = 'left' if handedness.classification[0].label == 'Right' else 'right'
-                
+            for hand_landmarks in results.multi_hand_landmarks:
                 # Konwertuj landmarki do tablicy
                 landmarks_array = self.landmarks_to_array(hand_landmarks.landmark)
                 
                 # Przygotuj dane do zapisu (jedna ręka)
-                data_row = list(landmarks_array) + [target_angle, hand_type]
+                data_row = list(landmarks_array) + [target_angle]
 
                 # Zapisz do CSV
                 df_new = pd.DataFrame([data_row], columns=columns)
@@ -238,7 +235,7 @@ class HandAnalyzer:
             return
 
         print("=== TRYB INFERENCJI ===")
-        print("Każda ręka analizowana OSOBNO")
+        print("Każda ręka analizowana OSOBNO przez jeden uniwersalny model")
         print("Naciśnij 'q' aby zakończyć")
 
         cap = cv2.VideoCapture(0)
@@ -297,7 +294,7 @@ class HandAnalyzer:
                 self.send_midi_data(left_prediction, right_prediction)  # Używam predykcji modelu
 
             # Dodatkowe informacje na ekranie
-            cv2.putText(frame, "Analiza osobna dla kazdej reki",
+            cv2.putText(frame, "Jeden model uniwersalny dla kazdej reki",
                         (10, frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX,
                         0.5, (255, 255, 255), 1)
 

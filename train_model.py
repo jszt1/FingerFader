@@ -63,16 +63,12 @@ class HandModelTrainer:
         print(f"Rozkład kątów docelowych:")
         print(df['target_angle'].value_counts().sort_index())
         
-        print(f"Rozkład typów rąk:")
-        if 'hand_type' in df.columns:
-            print(df['hand_type'].value_counts())
-        
         # Sprawdź czy mamy wystarczająco danych
         if len(df) < 10:
-            print("⚠️  Uwaga: Bardzo mało danych treningowych. Zalecane minimum to 50+ próbek na rękę.")
+            print("⚠️  Uwaga: Bardzo mało danych treningowych. Zalecane minimum to 50+ próbek.")
 
-        # Przygotuj dane wejściowe (wszystkie kolumny oprócz target_angle i hand_type)
-        feature_columns = [col for col in df.columns if col not in ['target_angle', 'hand_type']]
+        # Przygotuj dane wejściowe (wszystkie kolumny oprócz target_angle)
+        feature_columns = [col for col in df.columns if col != 'target_angle']
         X = df[feature_columns].values
         y = df['target_angle'].values
 
@@ -138,7 +134,7 @@ class HandModelTrainer:
         val_losses = []
 
         print(f"\nRozpoczynanie treningu na {self.epochs} epok...")
-        print(f"Model dla pojedynczej ręki (input_size={input_size})")
+        print(f"Model dla pojedynczej ręki - uniwersalny (input_size={input_size})")
 
         for epoch in range(self.epochs):
             # Faza treningowa
@@ -195,7 +191,7 @@ class HandModelTrainer:
         mae = mean_absolute_error(y_val, predictions)
         r2 = r2_score(y_val, predictions)
 
-        print(f"\n=== EWALUACJA MODELU (JEDNA RĘKA) ===")
+        print(f"\n=== EWALUACJA MODELU (UNIWERSALNY) ===")
         print(f"Mean Absolute Error: {mae:.2f}%")
         print(f"R² Score: {r2:.4f}")
 
@@ -215,7 +211,7 @@ class HandModelTrainer:
         plt.subplot(1, 2, 1)
         plt.plot(train_losses, label='Training Loss')
         plt.plot(val_losses, label='Validation Loss')
-        plt.title('Training History - Single Hand Model')
+        plt.title('Training History - Universal Hand Model')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.legend()
@@ -228,10 +224,10 @@ class HandModelTrainer:
                  ha='center', va='center', transform=plt.gca().transAxes)
 
         plt.tight_layout()
-        plt.savefig('training_history_single_hand.png', dpi=150, bbox_inches='tight')
+        plt.savefig('training_history_universal.png', dpi=150, bbox_inches='tight')
         plt.show()
 
-        print("Wykres zapisany jako 'training_history_single_hand.png'")
+        print("Wykres zapisany jako 'training_history_universal.png'")
 
     def plot_predictions(self, y_true, y_pred):
         """Rysuje wykres porównania predykcji z rzeczywistymi wartościami"""
@@ -272,10 +268,10 @@ class HandModelTrainer:
         plt.grid(True)
 
         plt.tight_layout()
-        plt.savefig('model_evaluation_single_hand.png', dpi=150, bbox_inches='tight')
+        plt.savefig('model_evaluation_universal.png', dpi=150, bbox_inches='tight')
         plt.show()
 
-        print("Wykres ewaluacji zapisany jako 'model_evaluation_single_hand.png'")
+        print("Wykres ewaluacji zapisany jako 'model_evaluation_universal.png'")
 
     def save_model(self):
         """Zapisuje wytrenowany model i scaler"""
@@ -284,22 +280,19 @@ class HandModelTrainer:
 
         print(f"\n✓ Model zapisany jako 'hand_model.pth'")
         print(f"✓ Scaler zapisany jako 'scaler.pkl'")
-        print(f"✓ Model przygotowany dla pojedynczej ręki (input_size=42)")
+        print(f"✓ Model przygotowany jako uniwersalny dla dowolnej ręki (input_size=42)")
 
     def analyze_data_distribution(self, df):
         """Analizuje rozkład danych treningowych"""
         print(f"\n=== ANALIZA DANYCH TRENINGOWYCH ===")
         
-        if 'hand_type' in df.columns:
-            print("Próbek dla każdego typu ręki:")
-            hand_counts = df['hand_type'].value_counts()
-            print(hand_counts)
-            
-            print("\nRozkład kątów dla każdej ręki:")
-            for hand_type in df['hand_type'].unique():
-                print(f"\n{hand_type.upper()} RĘKA:")
-                angles = df[df['hand_type'] == hand_type]['target_angle'].value_counts().sort_index()
-                print(angles)
+        print("Rozkład kątów w całym datasecie:")
+        angles = df['target_angle'].value_counts().sort_index()
+        print(angles)
+        
+        print(f"\nŁączna liczba próbek: {len(df)}")
+        print(f"Średni kąt: {df['target_angle'].mean():.1f}%")
+        print(f"Mediana kąta: {df['target_angle'].median():.1f}%")
 
     def train_full_pipeline(self):
         """Pełny pipeline treningu"""
@@ -330,7 +323,7 @@ class HandModelTrainer:
 
             print(f"\n🎉 Trening zakończony pomyślnie!")
             print(f"📊 Końcowe metryki: MAE = {mae:.2f}%, R² = {r2:.4f}")
-            print(f"📈 Model został wytrenowany na {len(X)} próbkach (każda ręka osobno)")
+            print(f"📈 Model został wytrenowany na {len(X)} próbkach (uniwersalny dla dowolnej ręki)")
 
             return True
 
@@ -340,7 +333,7 @@ class HandModelTrainer:
 
 
 def main():
-    print("=== TRENING MODELU ANALIZY DŁONI (KAŻDA RĘKA OSOBNO) ===\n")
+    print("=== TRENING MODELU ANALIZY DŁONI (UNIWERSALNY) ===\n")
 
     trainer = HandModelTrainer()
     success = trainer.train_full_pipeline()
@@ -350,9 +343,10 @@ def main():
         print("Uruchom: python hand_analyze.py --mode inference")
         print("\n💡 Zalety nowego podejścia:")
         print("• Każda ręka jest osobną próbką treningową")
-        print("• Podwójnie więcej danych z tego samego wysiłku")
-        print("• Osobne predykcje dla każdej ręki")
-        print("• Lepsze dopasowanie do asymetrii ruchów")
+        print("• Podwójnie więcej danych z tego samego wysiłku") 
+        print("• Jeden uniwersalny model dla dowolnej ręki")
+        print("• Prostsze zarządzanie modelami")
+        print("• Lepsze wykorzystanie danych treningowych")
     else:
         print("\n💡 Spróbuj zebrać więcej danych treningowych:")
         print("python hand_analyze.py --mode collect")
