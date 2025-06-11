@@ -498,7 +498,7 @@ Accuracy within:
         torch.save(self.model.state_dict(), 'improved_hand_model.pth')
         
         # Save the scaler
-        joblib.dump(self.scaler, 'improved_scaler.pkl')
+        joblib.dump(self.scaler, 'improvedd_scaler.pkl')
 
         # Save model info
         model_info = {
