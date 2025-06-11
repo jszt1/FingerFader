@@ -229,83 +229,73 @@ class HandAnalyzer:
             return 0.0
 
     def inference_mode(self):
-        """Tryb inferencji z osobnymi predykcjami dla każdej ręki"""
-        if not self.load_model():
-            print("Nie można załadować modelu. Uruchom najpierw trening.")
-            return
+    """Tryb inferencji z osobnymi predykcjami dla każdej ręki - TYLKO model"""
+    if not self.load_model():
+        print("Nie można załadować modelu. Uruchom najpierw trening.")
+        return
 
-        print("=== TRYB INFERENCJI ===")
-        print("Każda ręka analizowana OSOBNO przez jeden uniwersalny model")
-        print("Naciśnij 'q' aby zakończyć")
+    print("=== TRYB INFERENCJI ===")
+    print("Każda ręka analizowana OSOBNO przez jeden uniwersalny model")
+    print("Wyświetlane są TYLKO predykcje modelu")
+    print("Naciśnij 'q' aby zakończyć")
 
-        cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(0)
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-            # Odbij obraz horizontalnie dla lepszego UX
-            frame = cv2.flip(frame, 1)
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.hands.process(rgb_frame)
+        # Odbij obraz horizontalnie dla lepszego UX
+        frame = cv2.flip(frame, 1)
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(rgb_frame)
 
-            left_percentage = 0
-            right_percentage = 0
-            left_prediction = 0
-            right_prediction = 0
+        left_prediction = 0
+        right_prediction = 0
 
-            if results.multi_hand_landmarks and results.multi_handedness:
-                for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
-                    # Rysuj landmarki
-                    self.mp_drawing.draw_landmarks(
-                        frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+        if results.multi_hand_landmarks and results.multi_handedness:
+            for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+                # Rysuj landmarki
+                self.mp_drawing.draw_landmarks(
+                    frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
 
-                    # Określ która ręka (uwaga: MediaPipe odwraca left/right)
-                    is_left = handedness.classification[0].label == 'Right'
-                    hand_label = "Lewa" if is_left else "Prawa"
+                # Określ która ręka (uwaga: MediaPipe odwraca left/right)
+                is_left = handedness.classification[0].label == 'Right'
+                hand_label = "Lewa" if is_left else "Prawa"
 
-                    # Oblicz procent rozwarcia metodą geometryczną
-                    distance = self.calculate_finger_distance(hand_landmarks.landmark)
-                    percentage = self.normalize_distance_to_percentage(distance)
+                # TYLKO predykcja modelem
+                prediction = self.predict_hand_opening(hand_landmarks)
 
-                    # Predykcja modelem dla tej konkretnej ręki
-                    prediction = self.predict_hand_opening(hand_landmarks)
+                if is_left:
+                    left_prediction = prediction
+                    y_pos = 30
+                else:
+                    right_prediction = prediction
+                    y_pos = 60
 
-                    if is_left:
-                        left_percentage = percentage
-                        left_prediction = prediction
-                        y_pos = 30
-                    else:
-                        right_percentage = percentage
-                        right_prediction = prediction
-                        y_pos = 60
+                # Wyświetl TYLKO predykcje modelu na ekranie
+                cv2.putText(frame, f"{hand_label}: {prediction:.1f}%",
+                            (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7, (0, 255, 0), 2)
 
-                    # Wyświetl informacje na ekranie
-                    cv2.putText(frame, f"{hand_label} (geom): {percentage:.1f}%",
-                                (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX,
-                                0.6, (0, 255, 0), 2)
-                    
-                    cv2.putText(frame, f"{hand_label} (model): {prediction:.1f}%",
-                                (10, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX,
-                                0.6, (255, 0, 0), 2)
+            # Wyślij dane MIDI (predykcje modelu)
+            self.send_midi_data(left_prediction, right_prediction)
 
-                # Wyślij dane MIDI (możesz wybrać czy geometryczne czy z modelu)
-                self.send_midi_data(left_prediction, right_prediction)  # Używam predykcji modelu
+        # Dodatkowe informacje na ekranie
+        cv2.putText(frame, "Uniwersalny model - tylko predykcje",
+                    (10, frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (255, 255, 255), 1)
 
-            # Dodatkowe informacje na ekranie
-            cv2.putText(frame, "Jeden model uniwersalny dla kazdej reki",
-                        (10, frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (255, 255, 255), 1)
+        # Wyświetl obraz
+        cv2.imshow('Hand Analysis - Model Only', frame)
 
-            # Wyświetl obraz
-            cv2.imshow('Hand Analysis - Separate Hands', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+    cap.release()
+    cv2.destroyAllWindows()
 
-        cap.release()
-        cv2.destroyAllWindows()
 
     def cleanup(self):
         """Czyszczenie zasobów"""
