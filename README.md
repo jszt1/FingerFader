@@ -27,7 +27,7 @@ print(torch.cuda.is_available())
 ### 1. Zbieranie danych treningowych
 
 ```bash
-python hand_analysis.py --mode collect
+python hand_analize.py --mode collect
 ```
 
 Program wykona 5 rund zbierania danych:
