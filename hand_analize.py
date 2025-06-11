@@ -137,7 +137,7 @@ class HandAnalyzer:
 
         for round_num in range(self.DATA_COLLECTION_ROUNDS):
             # Wylosuj kąt
-            target_angle = random.randint(0, 10) * 10  # 0, 10, 20, ..., 100
+            target_angle = int(random.uniform(0, 10)) * 10  # 0, 10, 20, ..., 100
 
             print(f"\nRunda {round_num + 1}/{self.DATA_COLLECTION_ROUNDS}")
             print(f"Ustaw obie ręce na {target_angle}% rozwarcia")
